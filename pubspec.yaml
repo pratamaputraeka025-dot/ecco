@@ -1,5 +1,5 @@
 name: flutter_ecommerce
-description: Aplikasi E-Commerce Flutter untuk tugas kuliah
+description: Aplikasi E-Commerce Flutter dengan Supabase
 
 publish_to: 'none'
 version: 1.0.0+1
@@ -10,8 +10,11 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  # State management
   provider: ^6.1.1
-  shared_preferences: ^2.2.2
+  # Supabase Flutter SDK — pengganti SharedPreferences & backend
+  supabase_flutter: ^2.5.6
+  # UI & utilities
   cupertino_icons: ^1.0.6
   google_fonts: ^6.1.0
   cached_network_image: ^3.3.1
@@ -26,5 +29,3 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
-  assets:
-    - assets/images/

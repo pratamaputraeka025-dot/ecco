@@ -1,6 +1,8 @@
 // lib/providers/auth_provider.dart
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/models.dart';
+import '../utils/supabase_config.dart';
 
 class AuthProvider extends ChangeNotifier {
   UserModel? _currentUser;
@@ -10,81 +12,187 @@ class AuthProvider extends ChangeNotifier {
   bool get isLoggedIn => _currentUser != null;
   bool get isLoading => _isLoading;
 
-  // Demo users
-  final List<Map<String, String>> _demoUsers = [
-    {
-      'email': 'demo@shopnow.com',
-      'password': '123456',
-      'name': 'Budi Santoso',
-      'phone': '081234567890',
-      'address': 'Jl. Sudirman No. 10, Jakarta Selatan',
-    },
-    {
-      'email': 'user@test.com',
-      'password': 'password',
-      'name': 'Siti Rahayu',
-      'phone': '085678901234',
-      'address': 'Jl. Gatot Subroto No. 5, Jakarta Pusat',
-    },
-  ];
+  AuthProvider() {
+    _initSession();
+    supabase.auth.onAuthStateChange.listen((data) {
+      final event = data.event;
+      if (event == AuthChangeEvent.signedOut) {
+        _currentUser = null;
+        notifyListeners();
+      }
+    });
+  }
 
-  Future<String?> login(String email, String password) async {
-    _isLoading = true;
-    notifyListeners();
-
-    await Future.delayed(const Duration(seconds: 1)); // Simulate API call
-
-    final user = _demoUsers.firstWhere(
-      (u) => u['email'] == email && u['password'] == password,
-      orElse: () => {},
-    );
-
-    _isLoading = false;
-
-    if (user.isNotEmpty) {
-      _currentUser = UserModel(
-        id: 'user_${DateTime.now().millisecondsSinceEpoch}',
-        name: user['name']!,
-        email: user['email']!,
-        phone: user['phone']!,
-        address: user['address']!,
-      );
-      notifyListeners();
-      return null; // Success
-    } else {
-      notifyListeners();
-      return 'Email atau password salah';
+  Future<void> _initSession() async {
+    final session = supabase.auth.currentSession;
+    if (session != null) {
+      await _loadProfile(session.user);
     }
   }
 
-  Future<String?> register(String name, String email, String password, String phone) async {
+  Future<void> _loadProfile(User user) async {
+    try {
+      final data = await supabase
+          .from('profiles')
+          .select()
+          .eq('id', user.id)
+          .single();
+
+      _currentUser = UserModel.fromMap(data, user.email ?? '');
+      notifyListeners();
+    } catch (e) {
+      debugPrint('Error loading profile: $e');
+    }
+  }
+
+  Future<String?> register({
+    required String name,
+    required String email,
+    required String password,
+    required String phone,
+    required String role,
+  }) async {
     _isLoading = true;
     notifyListeners();
 
-    await Future.delayed(const Duration(seconds: 1));
+    try {
+      final response = await supabase.auth.signUp(
+        email: email,
+        password: password,
+        data: {
+          'name': name,
+          'phone': phone,
+          'role': role,
+        },
+      );
 
-    final exists = _demoUsers.any((u) => u['email'] == email);
-    if (exists) {
+      if (response.user == null) {
+        return 'Registrasi gagal, coba lagi';
+      }
+
+      await Future.delayed(const Duration(milliseconds: 500));
+      await _loadProfile(response.user!);
+      return null;
+    } on AuthException catch (e) {
+      return _translateAuthError(e.message);
+    } catch (e) {
+      return 'Terjadi kesalahan: $e';
+    } finally {
       _isLoading = false;
       notifyListeners();
-      return 'Email sudah terdaftar';
     }
-
-    _currentUser = UserModel(
-      id: 'user_${DateTime.now().millisecondsSinceEpoch}',
-      name: name,
-      email: email,
-      phone: phone,
-      address: '',
-    );
-
-    _isLoading = false;
-    notifyListeners();
-    return null;
   }
 
-  void logout() {
+  Future<String?> login({
+    required String email,
+    required String password,
+  }) async {
+    _isLoading = true;
+    notifyListeners();
+
+    try {
+      final response = await supabase.auth.signInWithPassword(
+        email: email,
+        password: password,
+      );
+
+      if (response.user == null) {
+        return 'Login gagal';
+      }
+
+      await _loadProfile(response.user!);
+      return null;
+    } on AuthException catch (e) {
+      return _translateAuthError(e.message);
+    } catch (e) {
+      return 'Terjadi kesalahan: $e';
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> logout() async {
+    await supabase.auth.signOut();
     _currentUser = null;
     notifyListeners();
+  }
+
+  Future<String?> updateProfile({String? name, String? phone, String? address}) async {
+    if (_currentUser == null) return 'Belum login';
+    _isLoading = true;
+    notifyListeners();
+
+    try {
+      final updates = <String, dynamic>{
+        'updated_at': DateTime.now().toIso8601String(),
+        if (name != null) 'name': name,
+        if (phone != null) 'phone': phone,
+        if (address != null) 'address': address,
+      };
+
+      await supabase.from('profiles').update(updates).eq('id', _currentUser!.id);
+
+      final user = supabase.auth.currentUser!;
+      await _loadProfile(user);
+      return null;
+    } catch (e) {
+      return 'Gagal update profile: $e';
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  Future<String?> updateFullProfile({
+    String? name,
+    String? phone,
+    String? address,
+    String? avatarUrl,
+    DateTime? birthDate,
+    String? gender,
+  }) async {
+    if (_currentUser == null) return 'Belum login';
+    _isLoading = true;
+    notifyListeners();
+
+    try {
+      final updates = <String, dynamic>{
+        'updated_at': DateTime.now().toIso8601String(),
+        if (name != null) 'name': name,
+        if (phone != null) 'phone': phone,
+        if (address != null) 'address': address,
+        if (avatarUrl != null) 'avatar_url': avatarUrl,
+        if (birthDate != null) 'birth_date': birthDate.toIso8601String().split('T')[0],
+        if (gender != null) 'gender': gender,
+      };
+
+      await supabase.from('profiles').update(updates).eq('id', _currentUser!.id);
+
+      final user = supabase.auth.currentUser!;
+      await _loadProfile(user);
+      return null;
+    } catch (e) {
+      return 'Gagal update profile: $e';
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  String _translateAuthError(String message) {
+    if (message.contains('already registered') || message.contains('already exists')) {
+      return 'Email sudah terdaftar';
+    }
+    if (message.contains('Invalid login credentials')) {
+      return 'Email atau password salah';
+    }
+    if (message.contains('Email not confirmed')) {
+      return 'Email belum dikonfirmasi, cek inbox kamu';
+    }
+    if (message.contains('Password should be')) {
+      return 'Password minimal 6 karakter';
+    }
+    return message;
   }
 }
